@@ -103,7 +103,7 @@ async def send_block(message: types.Message, block_name: str):
             text = row['Текст сообщения']
             text = text.replace("{приветствие}", get_greeting())
             text = text.replace("{имя}", message.from_user.first_name or "друг")
-                text = text.replace("{дата+8}", get_date_plus_8())
+        text = text.replace("{дата+8}", get_date_plus_8())
             await message.answer(text)
 
     # Кнопки
