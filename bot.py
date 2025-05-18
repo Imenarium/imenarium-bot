@@ -1,55 +1,25 @@
-import os
-import re
+
 import logging
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InputFile
-from openpyxl import load_workbook
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.enums import ParseMode
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.markdown import hbold
+from aiogram import F
+import asyncio
+import pandas as pd
+import random
 from datetime import datetime
 
-# === НАСТРОЙКИ ===
-API_TOKEN = os.getenv("BOT_TOKEN")  # Установи переменную окружения или вставь токен напрямую
-SCENARIO_PATH = "scenario.xlsx"
-MEDIA_FOLDER = "data"
+# Загрузка сценария из Excel
+df = pd.read_excel("scenario.xlsx")
 
-# === НАСТРОЙКА ЛОГИРОВАНИЯ ===
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+# Инициализация
+API_TOKEN = "YOUR_BOT_TOKEN_HERE"
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
 
-# === МЕНЮ ===
-main_menu = ReplyKeyboardMarkup(resize_keyboard=True)
-main_menu.add(
-    KeyboardButton("В начало"),
-    KeyboardButton("Как заказать книгу")
-).add(
-    KeyboardButton("Доставка и оплата"),
-    KeyboardButton("В чат с оператором")
-).add(
-    KeyboardButton("Перейти на сайт")
-)
-
-# === ЗАГРУЗКА СЦЕНАРИЯ ===
-SCENARIO = {}
-KEYWORDS = {}
-
-def load_scenario():
-    wb = load_workbook(SCENARIO_PATH)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        block_id, text, buttons, transitions, keywords, media = row
-        block = {
-            "text": text,
-            "buttons": [b.strip() for b in str(buttons).split('|')] if buttons else [],
-            "transitions": [t.strip() for t in str(transitions).split('|')] if transitions else [],
-            "media": media
-        }
-        SCENARIO[block_id] = block
-
-        if keywords:
-            for kw in str(keywords).split(','):
-                KEYWORDS[kw.strip().lower()] = block_id
-
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+# Приветствия по времени суток
 def get_greeting():
     hour = datetime.now().hour
     if 5 <= hour < 12:
@@ -61,43 +31,91 @@ def get_greeting():
     else:
         return "Доброй ночи"
 
-def render_block(block_id, message):
-    if block_id not in SCENARIO:
-        return message.answer("Блок не найден :(")
-    block = SCENARIO[block_id]
-    text = block["text"].replace("{имя}", message.from_user.first_name)
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    for btn in block["buttons"]:
-        keyboard.add(KeyboardButton(btn))
+# Случайные ответы на произвольные сообщения
+fallback_responses = [
+    "{имя}, боюсь, я не понимаю человеческих слов...\nНо если вы нажмёте одну из кнопок ниже — я точно вас услышу! ✨",
+    "{имя}, возможно, вы сказали что-то важное...\nНо, увы, я понимаю только кнопочки 😅\nДавайте выберем что-нибудь вместе?",
+    "{имя}, кажется, вы отправили звёздное послание без кнопки!\nЯ, к сожалению, не телепат. Но кнопки — моя суперсила 🚀",
+    "{имя}, вы невероятны!\nНо я — не маг, не волшебник, а всего лишь бот...\nИ мне очень помогают кнопки 👇"
+]
 
-    if block["media"]:
-        file_path = os.path.join(MEDIA_FOLDER, block["media"])
-        if os.path.exists(file_path):
-            return message.answer_photo(InputFile(file_path), caption=text, reply_markup=keyboard)
-    return message.answer(text, reply_markup=keyboard)
+# Словарь блоков
+blocks = {row['Блок']: row for _, row in df.iterrows()}
 
-# === СТАРТ ===
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    greet = get_greeting()
-    await render_block("Приветствие", message)
+# Ключевые слова
+keyword_map = {}
+for _, row in df.iterrows():
+    if pd.notna(row['Ключевые слова']):
+        keys = [k.strip().lower() for k in str(row['Ключевые слова']).split(';')]
+        for k in keys:
+            keyword_map[k] = row['Блок']
 
-# === ОБРАБОТКА КНОПОК ===
-@dp.message_handler(lambda message: message.text in SCENARIO)
-async def handle_exact_block(message: types.Message):
-    await render_block(message.text, message)
+# Обработка кнопок
+@dp.message(F.text)
+async def handle_message(message: types.Message):
+    user_input = message.text.strip()
+    user_name = message.from_user.first_name or "друг"
 
-# === ОБРАБОТКА КЛЮЧЕВЫХ СЛОВ ===
-@dp.message_handler(lambda message: message.text)
-async def handle_keywords(message: types.Message):
-    text = message.text.lower()
-    for kw, block_id in KEYWORDS.items():
-        if re.search(kw, text):
-            return await render_block(block_id, message)
+    # 1. Проверка на ключевое слово
+    lower_text = user_input.lower()
+    for key, target_block in keyword_map.items():
+        if key in lower_text:
+            await send_block(message, target_block)
+            return
 
-    await message.answer(f"{message.from_user.first_name}, если вы не нашли нужную кнопку — я с радостью помогу! Просто выберите пункт внизу 👇", reply_markup=main_menu)
+    # 2. Проверка на совпадение с кнопкой
+    for block_name, row in blocks.items():
+        if pd.notna(row['Кнопки']):
+            buttons = [b.strip() for b in str(row['Кнопки']).split('|')]
+            transitions = [t.strip().lstrip('→').strip() for t in str(row['Переходы']).split('|')]
+            button_map = dict(zip(buttons, transitions))
+            if user_input in button_map:
+                await send_block(message, button_map[user_input])
+                return
 
-# === ЗАПУСК ===
-if __name__ == '__main__':
-    load_scenario()
-    executor.start_polling(dp, skip_updates=True)
+    # 3. Иначе — случайный fallback-ответ
+    text = random.choice(fallback_responses).replace("{имя}", user_name)
+    await message.answer(text)
+
+# Отправка блока по имени
+async def send_block(message: types.Message, block_name: str):
+    if block_name not in blocks:
+        await message.answer("Блок не найден.")
+        return
+
+    row = blocks[block_name]
+
+    # Особая логика для блока 'Видео'
+    if block_name.lower() == "видео":
+        media_files = str(row['Медиа']).split(';')
+        captions = str(row['Текст сообщения']).split(';')
+        for file, caption in zip(media_files, captions):
+            await message.answer_video(open(file.strip(), 'rb'), caption=caption.strip())
+    else:
+        # Отправка медиа (если есть)
+        if pd.notna(row['Медиа']):
+            media_files = str(row['Медиа']).split(';')
+            for file in media_files:
+                await message.answer_photo(open(file.strip(), 'rb'))
+
+        # Текст
+        if pd.notna(row['Текст сообщения']):
+            text = row['Текст сообщения']
+            text = text.replace("{приветствие}", get_greeting())
+            text = text.replace("{имя}", message.from_user.first_name or "друг")\n                text = text.replace("{дата+8}", get_date_plus_8())
+            await message.answer(text)
+
+    # Кнопки
+    if pd.notna(row['Кнопки']) and pd.notna(row['Переходы']):
+        buttons = [b.strip() for b in str(row['Кнопки']).split('|')]
+        markup = ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(*[KeyboardButton(text=b) for b in buttons])
+        await message.answer("Выберите действие:", reply_markup=markup)
+
+# Запуск
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
