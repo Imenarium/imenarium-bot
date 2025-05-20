@@ -1,7 +1,7 @@
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, Text  # Исправленный импорт
+from aiogram.filters import Command, Text  # Проверяем стандартный импорт
 import asyncio
 import pandas as pd
 import random
