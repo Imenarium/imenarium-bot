@@ -1,7 +1,7 @@
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, Text
+from aiogram.filters import Command, Text  # Исправленный импорт
 import asyncio
 import pandas as pd
 import random
@@ -60,7 +60,7 @@ for _, row in df.iterrows():
             keyword_map[k] = row['Блок']
 
 # Обработка команды /start
-@dp.message(Command("start"))
+@dp.message(Command(commands=["start"]))
 async def start_command(message: Message):
     await send_block(message, "Приветствие")
 
